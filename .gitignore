@@ -1,0 +1,29 @@
+# Environment
+.env
+.env.*
+
+!.env.example
+
+# LinkedIn credentials
+access_token.txt
+id_token.txt
+person_urn.txt
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environment
+.venv/
+
+# IDE
+.idea/
+
+# OS
+.DS_Store
+
+__pycache__/
+*.pyc
+.venv/
+.idea/
