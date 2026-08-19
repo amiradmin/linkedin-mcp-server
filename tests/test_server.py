@@ -1,3 +1,5 @@
+import json
+
 import httpx
 import pytest
 
@@ -31,7 +33,7 @@ async def test_create_post_success(credentials, monkeypatch):
     async def handler(request: httpx.Request) -> httpx.Response:
         assert request.method == "POST"
         assert request.headers["authorization"] == "Bearer test-token"
-        body = request.json()
+        body = json.loads(request.content)
         assert body["author"] == "urn:li:person:test-user"
         assert body["commentary"] == "Hello from tests"
         return httpx.Response(201, headers={"x-restli-id": "urn:li:share:123"})
