@@ -36,8 +36,12 @@ async def test_create_post_success(credentials, monkeypatch):
         assert body["commentary"] == "Hello from tests"
         return httpx.Response(201, headers={"x-restli-id": "urn:li:share:123"})
 
+    original_async_client = httpx.AsyncClient
+
     def client(**kwargs):
-        return httpx.AsyncClient(transport=httpx.MockTransport(handler), **kwargs)
+        return original_async_client(
+            transport=httpx.MockTransport(handler), **kwargs
+        )
 
     monkeypatch.setattr(httpx, "AsyncClient", client)
 
@@ -108,8 +112,12 @@ async def test_get_profile_success(credentials, monkeypatch):
         assert request.url.path == "/v2/userinfo"
         return httpx.Response(200, json={"sub": "test-user", "name": "Test User"})
 
+    original_async_client = httpx.AsyncClient
+
     def client(**kwargs):
-        return httpx.AsyncClient(transport=httpx.MockTransport(handler), **kwargs)
+        return original_async_client(
+            transport=httpx.MockTransport(handler), **kwargs
+        )
 
     monkeypatch.setattr(httpx, "AsyncClient", client)
 
