@@ -12,6 +12,7 @@ PERSON_URN_FILE = BASE_DIR / "person_urn.txt"
 LINKEDIN_POSTS_URL = "https://api.linkedin.com/rest/posts"
 LINKEDIN_USERINFO_URL = "https://api.linkedin.com/v2/userinfo"
 LINKEDIN_VERSION = "202601"
+MAX_POST_TEXT_LENGTH = 3000
 
 
 def read_secret(path: Path) -> str:
@@ -40,6 +41,39 @@ def linkedin_headers(token: str) -> dict[str, str]:
     }
 
 
+def validation_error(code: str, message: str, **details: Any) -> dict[str, Any]:
+    error: dict[str, Any] = {"code": code, "message": message}
+    if details:
+        error["details"] = details
+    return {"success": False, "error": error}
+
+
+def validate_post_text(text: Any) -> tuple[str | None, dict[str, Any] | None]:
+    if not isinstance(text, str):
+        return None, validation_error(
+            "invalid_type",
+            "Post text must be a string.",
+            expected_type="string",
+        )
+
+    normalized_text = text.strip()
+    if not normalized_text:
+        return None, validation_error(
+            "empty_text",
+            "Post text cannot be empty or whitespace only.",
+        )
+
+    if len(normalized_text) > MAX_POST_TEXT_LENGTH:
+        return None, validation_error(
+            "text_too_long",
+            f"Post text cannot exceed {MAX_POST_TEXT_LENGTH} characters.",
+            max_length=MAX_POST_TEXT_LENGTH,
+            actual_length=len(normalized_text),
+        )
+
+    return normalized_text, None
+
+
 def response_error(response: httpx.Response) -> dict[str, Any]:
     try:
         error_data: Any = response.json()
@@ -66,18 +100,20 @@ server = MCPServer(
     description="Publish a public text post to the authenticated LinkedIn profile.",
 )
 async def linkedin_create_post(text: str) -> dict[str, Any]:
-    text = text.strip()
-    if not text:
-        return {"success": False, "error": "Post text cannot be empty."}
+    text, error = validate_post_text(text)
+    if error:
+        return error
+
+    assert text is not None
 
     try:
         token = get_access_token()
         author = get_person_urn()
         if not author.startswith("urn:li:person:"):
-            return {
-                "success": False,
-                "error": "person_urn.txt must contain a LinkedIn person URN.",
-            }
+            return validation_error(
+                "invalid_person_urn",
+                "person_urn.txt must contain a LinkedIn person URN.",
+            )
 
         payload = {
             "author": author,
