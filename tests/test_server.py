@@ -51,7 +51,54 @@ async def test_create_post_success(credentials, monkeypatch):
 @pytest.mark.asyncio
 async def test_create_post_rejects_empty_text(credentials):
     result = await linkedin_server.linkedin_create_post("   ")
-    assert result == {"success": False, "error": "Post text cannot be empty."}
+    assert result == {
+        "success": False,
+        "error": {
+            "code": "empty_text",
+            "message": "Post text cannot be empty or whitespace only.",
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_create_post_rejects_non_string_text(credentials):
+    result = await linkedin_server.linkedin_create_post(123)
+
+    assert result["success"] is False
+    assert result["error"]["code"] == "invalid_type"
+    assert result["error"]["details"]["expected_type"] == "string"
+
+
+@pytest.mark.asyncio
+async def test_create_post_rejects_text_over_max_length(credentials):
+    result = await linkedin_server.linkedin_create_post(
+        "x" * (linkedin_server.MAX_POST_TEXT_LENGTH + 1)
+    )
+
+    assert result["success"] is False
+    assert result["error"]["code"] == "text_too_long"
+    assert result["error"]["details"] == {
+        "max_length": linkedin_server.MAX_POST_TEXT_LENGTH,
+        "actual_length": linkedin_server.MAX_POST_TEXT_LENGTH + 1,
+    }
+
+
+@pytest.mark.asyncio
+async def test_create_post_does_not_call_linkedin_for_invalid_text(credentials, monkeypatch):
+    called = False
+
+    def client(**kwargs):
+        nonlocal called
+        called = True
+        return httpx.AsyncClient(**kwargs)
+
+    monkeypatch.setattr(httpx, "AsyncClient", client)
+
+    result = await linkedin_server.linkedin_create_post(" " * 10)
+
+    assert result["success"] is False
+    assert result["error"]["code"] == "empty_text"
+    assert called is False
 
 
 @pytest.mark.asyncio
