@@ -5,6 +5,13 @@ from urllib.parse import quote
 import httpx
 from mcp.server import MCPServer
 
+from .credentials import (
+    CredentialError,
+    CredentialProvider,
+    FileCredentialProvider,
+    LinkedInCredentials,
+)
+
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 ACCESS_TOKEN_FILE = BASE_DIR / "access_token.txt"
@@ -23,22 +30,41 @@ SENSITIVE_ERROR_KEYS = {
     "token",
 }
 
+_credential_provider: CredentialProvider | None = None
 
-def read_secret(path: Path) -> str:
-    if not path.exists():
-        raise RuntimeError(f"Missing secret file: {path}")
-    value = path.read_text().strip()
-    if not value:
-        raise RuntimeError(f"Secret file is empty: {path}")
-    return value
+
+def set_credential_provider(provider: CredentialProvider | None) -> None:
+    """Override the runtime credential provider.
+
+    Passing ``None`` restores the default local file provider. Production
+    deployments can install a secret-manager-backed provider at startup without
+    changing any MCP tool implementation.
+    """
+
+    global _credential_provider
+    _credential_provider = provider
+
+
+def get_credential_provider() -> CredentialProvider:
+    if _credential_provider is not None:
+        return _credential_provider
+    return FileCredentialProvider(ACCESS_TOKEN_FILE, PERSON_URN_FILE)
+
+
+def get_credentials() -> LinkedInCredentials:
+    return get_credential_provider().get_credentials()
 
 
 def get_access_token() -> str:
-    return read_secret(ACCESS_TOKEN_FILE)
+    """Backward-compatible accessor backed by the credential provider."""
+
+    return get_credentials().access_token
 
 
 def get_person_urn() -> str:
-    return read_secret(PERSON_URN_FILE)
+    """Backward-compatible accessor backed by the credential provider."""
+
+    return get_credentials().person_urn
 
 
 def linkedin_headers(token: str) -> dict[str, str]:
@@ -75,6 +101,13 @@ def error_response(code: str, message: str, **details: Any) -> dict[str, Any]:
         "success": False,
         "error": error,
     }
+
+
+def credential_error_response(exc: CredentialError) -> dict[str, Any]:
+    return error_response(
+        "credential_error",
+        str(exc),
+    )
 
 
 def validate_post_text(text: Any) -> tuple[str | None, dict[str, Any] | None]:
@@ -238,7 +271,7 @@ server = MCPServer(
     name="linkedin-mcp",
     title="LinkedIn MCP",
     description="MCP server for publishing and inspecting LinkedIn posts.",
-    version="1.2.0",
+    version="1.3.0",
 )
 
 
@@ -255,12 +288,13 @@ async def linkedin_create_post(text: str) -> dict[str, Any]:
     assert text is not None
 
     try:
-        token = get_access_token()
-        author = get_person_urn()
+        credentials = get_credentials()
+        token = credentials.access_token
+        author = credentials.person_urn
         if not author.startswith("urn:li:person:"):
             return error_response(
                 "invalid_person_urn",
-                "person_urn.txt must contain a LinkedIn person URN.",
+                "The credential provider must return a LinkedIn person URN.",
             )
 
         payload = {
@@ -292,6 +326,8 @@ async def linkedin_create_post(text: str) -> dict[str, Any]:
                 message="LinkedIn post published successfully.",
             )
         return linkedin_response_error(response, access_token=token)
+    except CredentialError as exc:
+        return credential_error_response(exc)
     except httpx.RequestError as exc:
         return request_exception_error(exc)
     except Exception:
@@ -305,7 +341,8 @@ async def linkedin_create_post(text: str) -> dict[str, Any]:
 )
 async def linkedin_get_profile() -> dict[str, Any]:
     try:
-        token = get_access_token()
+        credentials = get_credentials()
+        token = credentials.access_token
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.get(
                 LINKEDIN_USERINFO_URL,
@@ -314,6 +351,8 @@ async def linkedin_get_profile() -> dict[str, Any]:
         if response.status_code == 200:
             return success_response({"profile": response.json()})
         return linkedin_response_error(response, access_token=token)
+    except CredentialError as exc:
+        return credential_error_response(exc)
     except httpx.RequestError as exc:
         return request_exception_error(exc)
     except Exception:
@@ -333,7 +372,8 @@ async def linkedin_get_post(post_id: str) -> dict[str, Any]:
     assert post_id is not None
 
     try:
-        token = get_access_token()
+        credentials = get_credentials()
+        token = credentials.access_token
         encoded_post_id = quote(post_id, safe="")
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.get(
@@ -343,6 +383,8 @@ async def linkedin_get_post(post_id: str) -> dict[str, Any]:
         if response.status_code == 200:
             return success_response({"post": response.json()})
         return linkedin_response_error(response, access_token=token)
+    except CredentialError as exc:
+        return credential_error_response(exc)
     except httpx.RequestError as exc:
         return request_exception_error(exc)
     except Exception:
@@ -367,7 +409,8 @@ async def linkedin_update_post(post_id: str, text: str) -> dict[str, Any]:
     assert text is not None
 
     try:
-        token = get_access_token()
+        credentials = get_credentials()
+        token = credentials.access_token
         encoded_post_id = quote(post_id, safe="")
         headers = linkedin_headers(token)
         headers["X-RestLi-Method"] = "PARTIAL_UPDATE"
@@ -395,6 +438,8 @@ async def linkedin_update_post(post_id: str, text: str) -> dict[str, Any]:
                 message="LinkedIn post updated successfully.",
             )
         return linkedin_response_error(response, access_token=token)
+    except CredentialError as exc:
+        return credential_error_response(exc)
     except httpx.RequestError as exc:
         return request_exception_error(exc)
     except Exception:
@@ -414,7 +459,8 @@ async def linkedin_delete_post(post_id: str) -> dict[str, Any]:
     assert post_id is not None
 
     try:
-        token = get_access_token()
+        credentials = get_credentials()
+        token = credentials.access_token
         encoded_post_id = quote(post_id, safe="")
         headers = linkedin_headers(token)
         headers["X-RestLi-Method"] = "DELETE"
@@ -431,6 +477,8 @@ async def linkedin_delete_post(post_id: str) -> dict[str, Any]:
                 message="LinkedIn post deleted successfully.",
             )
         return linkedin_response_error(response, access_token=token)
+    except CredentialError as exc:
+        return credential_error_response(exc)
     except httpx.RequestError as exc:
         return request_exception_error(exc)
     except Exception:

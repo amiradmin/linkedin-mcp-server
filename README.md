@@ -107,7 +107,7 @@ pip install -r requirements.txt
 
 ## Credentials
 
-Credentials are intentionally kept outside Git.
+MCP tools obtain credentials through a `CredentialProvider` abstraction rather than reading secrets directly. The default local-development provider remains file-based for backward compatibility.
 
 Create these files in the project root:
 
@@ -130,7 +130,7 @@ Set restrictive permissions:
 chmod 600 access_token.txt person_urn.txt
 ```
 
-Never commit tokens, OAuth credentials, or personal credential files.
+Production deployments can install a secret-manager-backed provider without changing any MCP tool implementation. Never commit tokens, OAuth credentials, or personal credential files. See `docs/credentials.md` for the provider contract, production integration pattern, and secret-handling rules.
 
 ## OAuth design
 
@@ -171,7 +171,8 @@ pytest -q
 
 ## Security notes
 
-- Secrets are stored in local files ignored by Git.
+- MCP tools access secrets only through the credential-provider interface.
+- Local credential files are ignored by Git and should use restrictive permissions.
 - `.env.example` contains placeholders only.
 - GitHub push protection should remain enabled.
 - LinkedIn API errors are sanitized before they are returned to MCP clients.
@@ -179,4 +180,4 @@ pytest -q
 
 ## Portfolio description
 
-> A production-minded MCP server that exposes LinkedIn publishing and post management as structured AI tools, combining the Model Context Protocol, OAuth-based LinkedIn authentication, secure local credential handling, and REST API integration.
+> A production-minded MCP server that exposes LinkedIn publishing and post management as structured AI tools, combining the Model Context Protocol, OAuth-based LinkedIn authentication, secure credential-provider abstraction, and REST API integration.
