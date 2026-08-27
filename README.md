@@ -1,6 +1,6 @@
 # LinkedIn MCP Server
 
-A lightweight Model Context Protocol (MCP) server that lets an MCP-compatible AI assistant publish public text posts to an authenticated LinkedIn profile.
+A lightweight Model Context Protocol (MCP) server that lets an MCP-compatible AI assistant publish and manage public text posts on an authenticated LinkedIn profile.
 
 ## Architecture
 
@@ -16,7 +16,7 @@ LinkedIn MCP Server
 LinkedIn
 ```
 
-## MCP tool
+## MCP tools
 
 ### `linkedin_create_post`
 
@@ -31,6 +31,29 @@ Input:
 ```
 
 The tool returns the LinkedIn post ID on success.
+
+### `linkedin_get_profile`
+
+Returns the authenticated member's OpenID profile information.
+
+### `linkedin_get_post`
+
+Retrieves a LinkedIn post by a `urn:li:share:...` or `urn:li:ugcPost:...` identifier.
+
+### `linkedin_update_post`
+
+Updates the commentary text of an existing LinkedIn post.
+
+Input:
+
+```json
+{
+  "post_id": "urn:li:share:1234567890",
+  "text": "Updated post text"
+}
+```
+
+The server validates the post URN and text locally, then uses LinkedIn's Posts API `PARTIAL_UPDATE` operation. LinkedIn enforces ownership and permission rules; permission failures are returned as structured MCP errors.
 
 ## Requirements
 
@@ -91,7 +114,7 @@ npx @modelcontextprotocol/inspector \
   python -m src.linkedin_mcp.server
 ```
 
-Then connect to the STDIO server and call `linkedin_create_post` from the Inspector.
+Then connect to the STDIO server and call the LinkedIn tools from the Inspector.
 
 ## Testing
 
@@ -106,8 +129,9 @@ pytest -q
 - Secrets are stored in local files ignored by Git.
 - `.env.example` contains placeholders only.
 - GitHub push protection should remain enabled.
+- LinkedIn API errors are sanitized before they are returned to MCP clients.
 - If a LinkedIn token is ever exposed, revoke/rotate it immediately.
 
 ## Portfolio description
 
-> A production-minded MCP server that exposes LinkedIn publishing as a structured AI tool, combining the Model Context Protocol, OAuth-based LinkedIn authentication, secure local credential handling, and REST API integration.
+> A production-minded MCP server that exposes LinkedIn publishing and post management as structured AI tools, combining the Model Context Protocol, OAuth-based LinkedIn authentication, secure local credential handling, and REST API integration.

@@ -1,5 +1,6 @@
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 from mcp.server import MCPServer
@@ -87,6 +88,26 @@ def validate_post_text(text: Any) -> tuple[str | None, dict[str, Any] | None]:
         )
 
     return normalized_text, None
+
+
+def validate_post_urn(post_id: Any) -> tuple[str | None, dict[str, Any] | None]:
+    if not isinstance(post_id, str):
+        return None, validation_error(
+            "invalid_post_urn",
+            "post_id must be a LinkedIn share or ugcPost URN.",
+        )
+
+    normalized_post_id = post_id.strip()
+    if not (
+        normalized_post_id.startswith("urn:li:share:")
+        or normalized_post_id.startswith("urn:li:ugcPost:")
+    ):
+        return None, validation_error(
+            "invalid_post_urn",
+            "post_id must be a LinkedIn share or ugcPost URN.",
+        )
+
+    return normalized_post_id, None
 
 
 def redact_sensitive_data(value: Any, secrets: tuple[str, ...] = ()) -> Any:
@@ -307,6 +328,57 @@ async def linkedin_get_post(post_id: str) -> dict[str, Any]:
             )
         if response.status_code == 200:
             return {"success": True, "post": response.json()}
+        return linkedin_response_error(response, access_token=token)
+    except httpx.RequestError as exc:
+        return request_exception_error(exc)
+    except Exception:
+        return unexpected_error()
+
+
+@server.tool(
+    name="linkedin_update_post",
+    title="Update LinkedIn Post",
+    description="Update the commentary text of an existing LinkedIn post.",
+)
+async def linkedin_update_post(post_id: str, text: str) -> dict[str, Any]:
+    post_id, post_id_error = validate_post_urn(post_id)
+    if post_id_error:
+        return post_id_error
+
+    text, text_error = validate_post_text(text)
+    if text_error:
+        return text_error
+
+    assert post_id is not None
+    assert text is not None
+
+    try:
+        token = get_access_token()
+        encoded_post_id = quote(post_id, safe="")
+        headers = linkedin_headers(token)
+        headers["X-RestLi-Method"] = "PARTIAL_UPDATE"
+        payload = {
+            "patch": {
+                "$set": {
+                    "commentary": text,
+                }
+            }
+        }
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                f"{LINKEDIN_POSTS_URL}/{encoded_post_id}",
+                headers=headers,
+                json=payload,
+            )
+
+        if response.status_code == 204:
+            return {
+                "success": True,
+                "message": "LinkedIn post updated successfully.",
+                "post_id": post_id,
+                "text": text,
+            }
         return linkedin_response_error(response, access_token=token)
     except httpx.RequestError as exc:
         return request_exception_error(exc)

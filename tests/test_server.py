@@ -36,6 +36,7 @@ def test_mcp_server_exposes_expected_tools():
         "linkedin_create_post",
         "linkedin_get_profile",
         "linkedin_get_post",
+        "linkedin_update_post",
     } <= names
 
 
@@ -258,3 +259,88 @@ async def test_get_profile_maps_network_error_without_exception_details(
         },
     }
     assert "test-token" not in json.dumps(result)
+
+
+@pytest.mark.asyncio
+async def test_update_post_success(credentials, monkeypatch):
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "POST"
+        assert request.headers["authorization"] == "Bearer test-token"
+        assert request.headers["x-restli-method"] == "PARTIAL_UPDATE"
+        assert request.url.raw_path == b"/rest/posts/urn%3Ali%3Ashare%3A123"
+        body = json.loads(request.content)
+        assert body == {
+            "patch": {
+                "$set": {
+                    "commentary": "Updated post text",
+                }
+            }
+        }
+        return httpx.Response(204)
+
+    mock_async_client(monkeypatch, handler)
+
+    result = await linkedin_server.linkedin_update_post(
+        "urn:li:share:123",
+        "  Updated post text  ",
+    )
+
+    assert result == {
+        "success": True,
+        "message": "LinkedIn post updated successfully.",
+        "post_id": "urn:li:share:123",
+        "text": "Updated post text",
+    }
+
+
+@pytest.mark.asyncio
+async def test_update_post_rejects_invalid_urn_without_api_call(credentials, monkeypatch):
+    called = False
+
+    def client(**kwargs):
+        nonlocal called
+        called = True
+        return httpx.AsyncClient(**kwargs)
+
+    monkeypatch.setattr(httpx, "AsyncClient", client)
+
+    result = await linkedin_server.linkedin_update_post("123", "Updated text")
+
+    assert result["success"] is False
+    assert result["error"]["code"] == "invalid_post_urn"
+    assert called is False
+
+
+@pytest.mark.asyncio
+async def test_update_post_rejects_empty_text_without_api_call(credentials, monkeypatch):
+    called = False
+
+    def client(**kwargs):
+        nonlocal called
+        called = True
+        return httpx.AsyncClient(**kwargs)
+
+    monkeypatch.setattr(httpx, "AsyncClient", client)
+
+    result = await linkedin_server.linkedin_update_post("urn:li:share:123", "   ")
+
+    assert result["success"] is False
+    assert result["error"]["code"] == "empty_text"
+    assert called is False
+
+
+@pytest.mark.asyncio
+async def test_update_post_maps_permission_error(credentials, monkeypatch):
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(403, json={"message": "Post is not editable by this member"})
+
+    mock_async_client(monkeypatch, handler)
+
+    result = await linkedin_server.linkedin_update_post(
+        "urn:li:ugcPost:456",
+        "Updated text",
+    )
+
+    assert result["success"] is False
+    assert result["error"]["code"] == "linkedin_permission_error"
+    assert result["error"]["details"]["status_code"] == 403
