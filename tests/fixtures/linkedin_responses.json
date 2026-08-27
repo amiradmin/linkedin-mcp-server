@@ -1,0 +1,23 @@
+{
+  "profile_success": {
+    "sub": "test-user",
+    "name": "Test User",
+    "given_name": "Test",
+    "family_name": "User"
+  },
+  "post_success": {
+    "id": "urn:li:share:123",
+    "commentary": "Hello from fixture data"
+  },
+  "authentication_error": {
+    "message": "Expired or invalid access token",
+    "access_token": "test-token"
+  },
+  "permission_error": {
+    "message": "Insufficient permissions for this operation"
+  },
+  "rate_limit_error": {
+    "message": "Too many requests"
+  },
+  "server_error_text": "service unavailable"
+}
