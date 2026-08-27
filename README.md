@@ -132,6 +132,16 @@ chmod 600 access_token.txt person_urn.txt
 
 Never commit tokens, OAuth credentials, or personal credential files.
 
+## OAuth design
+
+The production authentication design uses LinkedIn's 3-legged authorization-code flow with the minimum scopes required by the current tools:
+
+```text
+openid profile w_member_social
+```
+
+Local development uses a loopback callback, while production requires an HTTPS callback and server-side secret storage. See `docs/oauth-flow.md` for the flow diagram, token lifecycle, failure states, and security requirements.
+
 ## Run the MCP server
 
 ```bash
