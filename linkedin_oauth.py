@@ -1,351 +1,168 @@
+import asyncio
+import html
 import os
-import secrets
 import urllib.parse
 import webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from typing import Any
 
-CLIENT_ID = os.environ["LINKEDIN_CLIENT_ID"]
+from src.linkedin_mcp.oauth import (
+    OAuthConfig,
+    OAuthFlowError,
+    build_authorization_url,
+    complete_oauth_callback,
+    generate_state,
+)
 
-REDIRECT_URI = "http://localhost:8000/callback"
 
-SCOPE = "w_member_social"
+DEFAULT_REDIRECT_URI = "http://localhost:8000/callback"
 
-STATE = secrets.token_urlsafe(32)
+
+class OAuthCallbackServer(HTTPServer):
+    oauth_complete: bool = False
+    oauth_result: dict[str, Any] | None = None
+    oauth_error: OAuthFlowError | None = None
 
 
 class CallbackHandler(BaseHTTPRequestHandler):
+    """Local-development callback handler.
 
-    def do_GET(self):
+    Request logging is intentionally disabled because the callback request line
+    contains the short-lived LinkedIn authorization code.
+    """
 
-        parsed = urllib.parse.urlparse(self.path)
+    config: OAuthConfig
+    expected_state: str
+    callback_path: str
 
-        print("\n" + "=" * 60)
-        print("CALLBACK RECEIVED")
-        print("=" * 60)
-        print("Path:", self.path)
-        print("Query:", parsed.query)
+    def log_message(self, format: str, *args: Any) -> None:
+        return
 
-        # فقط /callback را قبول می‌کنیم
-        if parsed.path != "/callback":
-            self.send_response(404)
-            self.end_headers()
-            self.wfile.write(b"Not found")
-            return
-
-        # پارامترهای URL
-        params = urllib.parse.parse_qs(parsed.query)
-
-        print("Params:", params)
-
-        print("=" * 60)
-
-        # -------------------------------------------------
-        # LinkedIn Error
-        # -------------------------------------------------
-
-        if "error" in params:
-
-            error = params.get(
-                "error",
-                ["unknown"]
-            )[0]
-
-            description = params.get(
-                "error_description",
-                [""]
-            )[0]
-
-            print("\nLINKEDIN ERROR")
-            print("Error:", error)
-            print("Description:", description)
-
-            self.send_response(400)
-            self.send_header(
-                "Content-Type",
-                "text/html; charset=utf-8"
-            )
-            self.end_headers()
-
-            html = f"""
-            <html>
-            <head>
-                <meta charset="utf-8">
-                <title>LinkedIn OAuth Error</title>
-            </head>
-            <body>
-                <h2>LinkedIn Authorization Failed</h2>
-                <p><strong>Error:</strong> {error}</p>
-                <p><strong>Description:</strong> {description}</p>
-            </body>
-            </html>
-            """
-
-            self.wfile.write(html.encode("utf-8"))
-
-            return
-
-        # -------------------------------------------------
-        # State validation
-        # -------------------------------------------------
-
-        received_state = params.get(
-            "state",
-            [None]
-        )[0]
-
-        print("\nSTATE CHECK")
-        print("Expected:", STATE)
-        print("Received:", received_state)
-
-        if received_state != STATE:
-
-            print("\nERROR: INVALID STATE")
-
-            self.send_response(400)
-            self.send_header(
-                "Content-Type",
-                "text/html; charset=utf-8"
-            )
-            self.end_headers()
-
-            html = f"""
-            <html>
-            <head>
-                <meta charset="utf-8">
-                <title>Invalid State</title>
-            </head>
-            <body>
-                <h2>Invalid OAuth State</h2>
-                <p>The OAuth state returned by LinkedIn does not match.</p>
-
-                <p>
-                    This usually means the callback URL was opened
-                    manually or an old OAuth request was used.
-                </p>
-
-                <p>Please close this window and start the script again.</p>
-            </body>
-            </html>
-            """
-
-            self.wfile.write(html.encode("utf-8"))
-
-            return
-
-        # -------------------------------------------------
-        # Authorization Code
-        # -------------------------------------------------
-
-        code = params.get(
-            "code",
-            [None]
-        )[0]
-
-        if not code:
-
-            print("\nERROR: NO AUTHORIZATION CODE")
-
-            self.send_response(400)
-            self.send_header(
-                "Content-Type",
-                "text/html; charset=utf-8"
-            )
-            self.end_headers()
-
-            self.wfile.write(
-                b"""
-                <html>
-                <body>
-                    <h2>No authorization code received.</h2>
-                </body>
-                </html>
-                """
-            )
-
-            return
-
-        # -------------------------------------------------
-        # SUCCESS
-        # -------------------------------------------------
-
-        print("\n" + "=" * 60)
-        print("SUCCESS")
-        print("=" * 60)
-
-        print("Authorization code received successfully.")
-
-        # برای امنیت، Code را کامل چاپ نمی‌کنیم
-        print(
-            "Code:",
-            code[:10] + "..." if len(code) > 10 else "***"
-        )
-
-        print("=" * 60)
-
-        # -------------------------------------------------
-        # Browser response
-        # -------------------------------------------------
-
-        self.send_response(200)
-
-        self.send_header(
-            "Content-Type",
-            "text/html; charset=utf-8"
-        )
-
+    def _send_html(self, status_code: int, title: str, message: str) -> None:
+        self.send_response(status_code)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
         self.end_headers()
-
-        html = """
-        <!DOCTYPE html>
-
+        page = f"""
+        <!doctype html>
         <html>
-        <head>
+          <head>
             <meta charset="utf-8">
-
-            <title>
-                LinkedIn OAuth
-            </title>
-        </head>
-
-        <body>
-
-            <h1>
-                LinkedIn Authorization Successful
-            </h1>
-
-            <p>
-                Authorization code received successfully.
-            </p>
-
-            <p>
-                You can close this browser window
-                and return to the terminal.
-            </p>
-
-        </body>
-
+            <title>{html.escape(title)}</title>
+          </head>
+          <body>
+            <h1>{html.escape(title)}</h1>
+            <p>{html.escape(message)}</p>
+          </body>
         </html>
         """
+        self.wfile.write(page.encode("utf-8"))
 
-        self.wfile.write(
-            html.encode("utf-8")
+    def do_GET(self) -> None:
+        parsed = urllib.parse.urlparse(self.path)
+        if parsed.path != self.callback_path:
+            self._send_html(404, "Not found", "Unknown OAuth callback path.")
+            return
+
+        params = urllib.parse.parse_qs(parsed.query)
+        server = self.server
+        if not isinstance(server, OAuthCallbackServer):
+            self._send_html(500, "OAuth error", "OAuth callback server is misconfigured.")
+            return
+
+        try:
+            token_data = asyncio.run(
+                complete_oauth_callback(
+                    self.config,
+                    params,
+                    self.expected_state,
+                )
+            )
+        except OAuthFlowError as exc:
+            server.oauth_error = exc
+            server.oauth_complete = True
+            self._send_html(400, "LinkedIn authorization failed", exc.message)
+            return
+
+        server.oauth_result = token_data
+        server.oauth_complete = True
+        self._send_html(
+            200,
+            "LinkedIn authorization successful",
+            "The authorization code was exchanged successfully. You can close this window.",
         )
 
-        # سرور را متوقف می‌کنیم
-        raise SystemExit
+
+def load_config() -> OAuthConfig:
+    client_id = os.getenv("LINKEDIN_CLIENT_ID", "").strip()
+    client_secret = os.getenv("LINKEDIN_CLIENT_SECRET", "").strip()
+    redirect_uri = os.getenv("LINKEDIN_REDIRECT_URI", DEFAULT_REDIRECT_URI).strip()
+
+    config = OAuthConfig(
+        client_id=client_id,
+        client_secret=client_secret,
+        redirect_uri=redirect_uri,
+    )
+    config.validate()
+    return config
 
 
-def main():
-
-    # -------------------------------------------------
-    # Check Client ID
-    # -------------------------------------------------
-
-    if not CLIENT_ID:
-
+def local_server_address(redirect_uri: str) -> tuple[str, int, str]:
+    parsed = urllib.parse.urlparse(redirect_uri)
+    if parsed.scheme != "http" or parsed.hostname not in {"localhost", "127.0.0.1"}:
         raise RuntimeError(
-            "LINKEDIN_CLIENT_ID is not set."
+            "linkedin_oauth.py supports only a local loopback HTTP callback. "
+            "Use the application OAuth layer for production HTTPS callbacks."
         )
+    if not parsed.path:
+        raise RuntimeError("LINKEDIN_REDIRECT_URI must include a callback path.")
 
-    # -------------------------------------------------
-    # OAuth parameters
-    # -------------------------------------------------
+    port = parsed.port or 80
+    return parsed.hostname, port, parsed.path
 
-    params = {
 
-        "response_type": "code",
+def main() -> None:
+    config = load_config()
+    host, port, callback_path = local_server_address(config.redirect_uri)
+    state = generate_state()
+    authorization_url = build_authorization_url(config, state)
 
-        "client_id": CLIENT_ID,
+    CallbackHandler.config = config
+    CallbackHandler.expected_state = state
+    CallbackHandler.callback_path = callback_path
 
-        "redirect_uri": REDIRECT_URI,
+    server = OAuthCallbackServer((host, port), CallbackHandler)
 
-        "state": STATE,
+    print("LinkedIn OAuth authorization started.")
+    print(f"Waiting for the registered local callback at {config.redirect_uri}")
+    print("Authorization codes, OAuth state, tokens, and client secrets are not logged.")
 
-        "scope": SCOPE,
-    }
-
-    # -------------------------------------------------
-    # Build authorization URL
-    # -------------------------------------------------
-
-    auth_url = (
-        "https://www.linkedin.com/oauth/v2/authorization?"
-        + urllib.parse.urlencode(params)
-    )
-
-    print("\n")
-    print("=" * 60)
-    print("LINKEDIN OAUTH")
-    print("=" * 60)
-
-    print("\nClient ID:")
-    print(CLIENT_ID)
-
-    print("\nRedirect URI:")
-    print(REDIRECT_URI)
-
-    print("\nScope:")
-    print(SCOPE)
-
-    print("\nState:")
-    print(STATE)
-
-    print("\nAuthorization URL:")
-    print(auth_url)
-
-    print("\nOpening LinkedIn browser...")
-
-    # -------------------------------------------------
-    # Open browser
-    # -------------------------------------------------
-
-    webbrowser.open(auth_url)
-
-    # -------------------------------------------------
-    # Start callback server
-    # -------------------------------------------------
-
-    server = HTTPServer(
-        ("localhost", 8000),
-        CallbackHandler
-    )
-
-    print("\n")
-    print("=" * 60)
-    print("WAITING FOR LINKEDIN CALLBACK")
-    print("=" * 60)
-
-    print(
-        f"\nListening on: {REDIRECT_URI}"
-    )
-
-    print(
-        "\nIMPORTANT:"
-    )
-
-    print(
-        "Do not manually open the callback URL."
-    )
-
-    print(
-        "Complete the authorization in LinkedIn."
-    )
+    opened = webbrowser.open(authorization_url)
+    if not opened:
+        server.server_close()
+        raise RuntimeError("Could not open the LinkedIn authorization page in a browser.")
 
     try:
-
-        server.serve_forever()
-
-    except SystemExit:
-
-        pass
-
+        while not server.oauth_complete:
+            server.handle_request()
     finally:
-
         server.server_close()
 
-        print("\nOAuth server stopped.")
+    if server.oauth_error is not None:
+        raise RuntimeError(
+            f"LinkedIn OAuth failed ({server.oauth_error.code}): "
+            f"{server.oauth_error.message}"
+        )
+
+    if server.oauth_result is None:
+        raise RuntimeError("LinkedIn OAuth finished without token data.")
+
+    expires_in = server.oauth_result.get("expires_in")
+    if expires_in is None:
+        print("LinkedIn OAuth token exchange completed successfully.")
+    else:
+        print(f"LinkedIn OAuth token exchange completed successfully (expires_in={expires_in}).")
+    print("Access and refresh tokens were not printed. Credential persistence is handled separately.")
 
 
 if __name__ == "__main__":
-
     main()
