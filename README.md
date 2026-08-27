@@ -55,6 +55,41 @@ Input:
 
 The server validates the post URN and text locally, then uses LinkedIn's Posts API `PARTIAL_UPDATE` operation. LinkedIn enforces ownership and permission rules; permission failures are returned as structured MCP errors.
 
+### `linkedin_delete_post`
+
+Deletes a LinkedIn post by its share or UGC post URN. See `docs/delete-post.md` for API behavior and idempotency details.
+
+## Response schema
+
+All MCP tools use one stable response contract.
+
+Successful calls return:
+
+```json
+{
+  "success": true,
+  "data": {
+    "tool_specific_field": "value"
+  },
+  "message": "Optional success message"
+}
+```
+
+Failures return:
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "machine_readable_code",
+    "message": "Human-readable description",
+    "details": {}
+  }
+}
+```
+
+`data` contains the tool-specific payload. `message` and `error.details` are optional. See `docs/response-schema.md` for the complete contract and migration notes.
+
 ## Requirements
 
 - Python 3.11+
