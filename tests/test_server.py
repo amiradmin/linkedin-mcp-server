@@ -37,7 +37,22 @@ def test_mcp_server_exposes_expected_tools():
         "linkedin_get_profile",
         "linkedin_get_post",
         "linkedin_update_post",
+        "linkedin_delete_post",
     } <= names
+
+
+def test_response_helpers_use_stable_envelopes():
+    assert linkedin_server.success_response({"value": 1}) == {
+        "success": True,
+        "data": {"value": 1},
+    }
+    assert linkedin_server.error_response("example_error", "Example message") == {
+        "success": False,
+        "error": {
+            "code": "example_error",
+            "message": "Example message",
+        },
+    }
 
 
 @pytest.mark.asyncio
@@ -54,9 +69,14 @@ async def test_create_post_success(credentials, monkeypatch):
 
     result = await linkedin_server.linkedin_create_post("  Hello from tests  ")
 
-    assert result["success"] is True
-    assert result["post_id"] == "urn:li:share:123"
-    assert result["text"] == "Hello from tests"
+    assert result == {
+        "success": True,
+        "data": {
+            "post_id": "urn:li:share:123",
+            "text": "Hello from tests",
+        },
+        "message": "LinkedIn post published successfully.",
+    }
 
 
 @pytest.mark.asyncio
@@ -123,15 +143,50 @@ async def test_get_profile_success(credentials, monkeypatch):
 
     result = await linkedin_server.linkedin_get_profile()
 
-    assert result["success"] is True
-    assert result["profile"]["sub"] == "test-user"
+    assert result == {
+        "success": True,
+        "data": {
+            "profile": {
+                "sub": "test-user",
+                "name": "Test User",
+            }
+        },
+    }
 
 
 @pytest.mark.asyncio
-async def test_get_post_rejects_invalid_urn(credentials):
+async def test_get_post_success_uses_data_envelope(credentials, monkeypatch):
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"
+        assert request.url.raw_path == b"/rest/posts/urn%3Ali%3Ashare%3A123"
+        return httpx.Response(200, json={"id": "urn:li:share:123", "commentary": "Hello"})
+
+    mock_async_client(monkeypatch, handler)
+
+    result = await linkedin_server.linkedin_get_post(" urn:li:share:123 ")
+
+    assert result == {
+        "success": True,
+        "data": {
+            "post": {
+                "id": "urn:li:share:123",
+                "commentary": "Hello",
+            }
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_get_post_rejects_invalid_urn_with_structured_error(credentials):
     result = await linkedin_server.linkedin_get_post("123")
-    assert result["success"] is False
-    assert "share or ugcPost URN" in result["error"]
+
+    assert result == {
+        "success": False,
+        "error": {
+            "code": "invalid_post_urn",
+            "message": "post_id must be a LinkedIn share or ugcPost URN.",
+        },
+    }
 
 
 @pytest.mark.asyncio
@@ -287,9 +342,11 @@ async def test_update_post_success(credentials, monkeypatch):
 
     assert result == {
         "success": True,
+        "data": {
+            "post_id": "urn:li:share:123",
+            "text": "Updated post text",
+        },
         "message": "LinkedIn post updated successfully.",
-        "post_id": "urn:li:share:123",
-        "text": "Updated post text",
     }
 
 
