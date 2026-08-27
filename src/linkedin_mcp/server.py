@@ -50,23 +50,36 @@ def linkedin_headers(token: str) -> dict[str, str]:
     }
 
 
-def validation_error(code: str, message: str, **details: Any) -> dict[str, Any]:
-    error: dict[str, Any] = {"code": code, "message": message}
-    if details:
-        error["details"] = details
-    return {"success": False, "error": error}
+def success_response(
+    data: dict[str, Any],
+    *,
+    message: str | None = None,
+) -> dict[str, Any]:
+    response: dict[str, Any] = {
+        "success": True,
+        "data": data,
+    }
+    if message:
+        response["message"] = message
+    return response
 
 
-def operation_error(code: str, message: str, **details: Any) -> dict[str, Any]:
-    error: dict[str, Any] = {"code": code, "message": message}
+def error_response(code: str, message: str, **details: Any) -> dict[str, Any]:
+    error: dict[str, Any] = {
+        "code": code,
+        "message": message,
+    }
     if details:
         error["details"] = details
-    return {"success": False, "error": error}
+    return {
+        "success": False,
+        "error": error,
+    }
 
 
 def validate_post_text(text: Any) -> tuple[str | None, dict[str, Any] | None]:
     if not isinstance(text, str):
-        return None, validation_error(
+        return None, error_response(
             "invalid_type",
             "Post text must be a string.",
             expected_type="string",
@@ -74,13 +87,13 @@ def validate_post_text(text: Any) -> tuple[str | None, dict[str, Any] | None]:
 
     normalized_text = text.strip()
     if not normalized_text:
-        return None, validation_error(
+        return None, error_response(
             "empty_text",
             "Post text cannot be empty or whitespace only.",
         )
 
     if len(normalized_text) > MAX_POST_TEXT_LENGTH:
-        return None, validation_error(
+        return None, error_response(
             "text_too_long",
             f"Post text cannot exceed {MAX_POST_TEXT_LENGTH} characters.",
             max_length=MAX_POST_TEXT_LENGTH,
@@ -92,7 +105,7 @@ def validate_post_text(text: Any) -> tuple[str | None, dict[str, Any] | None]:
 
 def validate_post_urn(post_id: Any) -> tuple[str | None, dict[str, Any] | None]:
     if not isinstance(post_id, str):
-        return None, validation_error(
+        return None, error_response(
             "invalid_post_urn",
             "post_id must be a LinkedIn share or ugcPost URN.",
         )
@@ -102,7 +115,7 @@ def validate_post_urn(post_id: Any) -> tuple[str | None, dict[str, Any] | None]:
         normalized_post_id.startswith("urn:li:share:")
         or normalized_post_id.startswith("urn:li:ugcPost:")
     ):
-        return None, validation_error(
+        return None, error_response(
             "invalid_post_urn",
             "post_id must be a LinkedIn share or ugcPost URN.",
         )
@@ -157,14 +170,14 @@ def linkedin_response_error(
     }
 
     if status_code == 401:
-        return operation_error(
+        return error_response(
             "linkedin_authentication_error",
             "LinkedIn authentication failed.",
             **details,
         )
 
     if status_code == 403:
-        return operation_error(
+        return error_response(
             "linkedin_permission_error",
             "LinkedIn denied access to this operation.",
             **details,
@@ -174,27 +187,27 @@ def linkedin_response_error(
         retry_after = response.headers.get("retry-after")
         if retry_after:
             details["retry_after"] = retry_after
-        return operation_error(
+        return error_response(
             "linkedin_rate_limit_error",
             "LinkedIn rate limit exceeded.",
             **details,
         )
 
     if 400 <= status_code < 500:
-        return operation_error(
+        return error_response(
             "linkedin_request_error",
             "LinkedIn rejected the request.",
             **details,
         )
 
     if 500 <= status_code:
-        return operation_error(
+        return error_response(
             "linkedin_server_error",
             "LinkedIn is temporarily unavailable.",
             **details,
         )
 
-    return operation_error(
+    return error_response(
         "linkedin_unexpected_response",
         "LinkedIn returned an unexpected response.",
         **details,
@@ -203,19 +216,19 @@ def linkedin_response_error(
 
 def request_exception_error(exc: httpx.RequestError) -> dict[str, Any]:
     if isinstance(exc, httpx.TimeoutException):
-        return operation_error(
+        return error_response(
             "linkedin_timeout",
             "The request to LinkedIn timed out.",
         )
 
-    return operation_error(
+    return error_response(
         "linkedin_network_error",
         "The request to LinkedIn failed due to a network error.",
     )
 
 
 def unexpected_error() -> dict[str, Any]:
-    return operation_error(
+    return error_response(
         "internal_error",
         "An unexpected internal error occurred.",
     )
@@ -225,7 +238,7 @@ server = MCPServer(
     name="linkedin-mcp",
     title="LinkedIn MCP",
     description="MCP server for publishing and inspecting LinkedIn posts.",
-    version="1.1.0",
+    version="1.2.0",
 )
 
 
@@ -245,7 +258,7 @@ async def linkedin_create_post(text: str) -> dict[str, Any]:
         token = get_access_token()
         author = get_person_urn()
         if not author.startswith("urn:li:person:"):
-            return validation_error(
+            return error_response(
                 "invalid_person_urn",
                 "person_urn.txt must contain a LinkedIn person URN.",
             )
@@ -271,12 +284,13 @@ async def linkedin_create_post(text: str) -> dict[str, Any]:
             )
 
         if response.status_code == 201:
-            return {
-                "success": True,
-                "message": "LinkedIn post published successfully.",
-                "post_id": response.headers.get("x-restli-id"),
-                "text": text,
-            }
+            return success_response(
+                {
+                    "post_id": response.headers.get("x-restli-id"),
+                    "text": text,
+                },
+                message="LinkedIn post published successfully.",
+            )
         return linkedin_response_error(response, access_token=token)
     except httpx.RequestError as exc:
         return request_exception_error(exc)
@@ -298,7 +312,7 @@ async def linkedin_get_profile() -> dict[str, Any]:
                 headers=linkedin_headers(token),
             )
         if response.status_code == 200:
-            return {"success": True, "profile": response.json()}
+            return success_response({"profile": response.json()})
         return linkedin_response_error(response, access_token=token)
     except httpx.RequestError as exc:
         return request_exception_error(exc)
@@ -312,22 +326,22 @@ async def linkedin_get_profile() -> dict[str, Any]:
     description="Retrieve a LinkedIn post by its REST post URN.",
 )
 async def linkedin_get_post(post_id: str) -> dict[str, Any]:
-    post_id = post_id.strip()
-    if not post_id.startswith("urn:li:share:") and not post_id.startswith("urn:li:ugcPost:"):
-        return {
-            "success": False,
-            "error": "post_id must be a LinkedIn share or ugcPost URN.",
-        }
+    post_id, post_id_error = validate_post_urn(post_id)
+    if post_id_error:
+        return post_id_error
+
+    assert post_id is not None
 
     try:
         token = get_access_token()
+        encoded_post_id = quote(post_id, safe="")
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.get(
-                f"{LINKEDIN_POSTS_URL}/{post_id}",
+                f"{LINKEDIN_POSTS_URL}/{encoded_post_id}",
                 headers=linkedin_headers(token),
             )
         if response.status_code == 200:
-            return {"success": True, "post": response.json()}
+            return success_response({"post": response.json()})
         return linkedin_response_error(response, access_token=token)
     except httpx.RequestError as exc:
         return request_exception_error(exc)
@@ -373,12 +387,13 @@ async def linkedin_update_post(post_id: str, text: str) -> dict[str, Any]:
             )
 
         if response.status_code == 204:
-            return {
-                "success": True,
-                "message": "LinkedIn post updated successfully.",
-                "post_id": post_id,
-                "text": text,
-            }
+            return success_response(
+                {
+                    "post_id": post_id,
+                    "text": text,
+                },
+                message="LinkedIn post updated successfully.",
+            )
         return linkedin_response_error(response, access_token=token)
     except httpx.RequestError as exc:
         return request_exception_error(exc)
@@ -411,11 +426,10 @@ async def linkedin_delete_post(post_id: str) -> dict[str, Any]:
             )
 
         if response.status_code == 204:
-            return {
-                "success": True,
-                "message": "LinkedIn post deleted successfully.",
-                "post_id": post_id,
-            }
+            return success_response(
+                {"post_id": post_id},
+                message="LinkedIn post deleted successfully.",
+            )
         return linkedin_response_error(response, access_token=token)
     except httpx.RequestError as exc:
         return request_exception_error(exc)
