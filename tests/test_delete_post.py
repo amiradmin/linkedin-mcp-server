@@ -48,8 +48,10 @@ async def test_delete_post_success(credentials, monkeypatch):
 
     assert result == {
         "success": True,
+        "data": {
+            "post_id": "urn:li:share:123",
+        },
         "message": "LinkedIn post deleted successfully.",
-        "post_id": "urn:li:share:123",
     }
 
 
