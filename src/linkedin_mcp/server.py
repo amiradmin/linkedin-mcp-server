@@ -386,6 +386,43 @@ async def linkedin_update_post(post_id: str, text: str) -> dict[str, Any]:
         return unexpected_error()
 
 
+@server.tool(
+    name="linkedin_delete_post",
+    title="Delete LinkedIn Post",
+    description="Delete an existing LinkedIn post owned by the authenticated member.",
+)
+async def linkedin_delete_post(post_id: str) -> dict[str, Any]:
+    post_id, post_id_error = validate_post_urn(post_id)
+    if post_id_error:
+        return post_id_error
+
+    assert post_id is not None
+
+    try:
+        token = get_access_token()
+        encoded_post_id = quote(post_id, safe="")
+        headers = linkedin_headers(token)
+        headers["X-RestLi-Method"] = "DELETE"
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.delete(
+                f"{LINKEDIN_POSTS_URL}/{encoded_post_id}",
+                headers=headers,
+            )
+
+        if response.status_code == 204:
+            return {
+                "success": True,
+                "message": "LinkedIn post deleted successfully.",
+                "post_id": post_id,
+            }
+        return linkedin_response_error(response, access_token=token)
+    except httpx.RequestError as exc:
+        return request_exception_error(exc)
+    except Exception:
+        return unexpected_error()
+
+
 def main() -> None:
     # STDIO is the MCP protocol channel; never print application logs to stdout.
     server.run("stdio")
