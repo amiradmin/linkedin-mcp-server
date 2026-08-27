@@ -14,6 +14,14 @@ LINKEDIN_USERINFO_URL = "https://api.linkedin.com/v2/userinfo"
 LINKEDIN_VERSION = "202601"
 MAX_POST_TEXT_LENGTH = 3000
 
+SENSITIVE_ERROR_KEYS = {
+    "access_token",
+    "authorization",
+    "client_secret",
+    "refresh_token",
+    "token",
+}
+
 
 def read_secret(path: Path) -> str:
     if not path.exists():
@@ -48,6 +56,13 @@ def validation_error(code: str, message: str, **details: Any) -> dict[str, Any]:
     return {"success": False, "error": error}
 
 
+def operation_error(code: str, message: str, **details: Any) -> dict[str, Any]:
+    error: dict[str, Any] = {"code": code, "message": message}
+    if details:
+        error["details"] = details
+    return {"success": False, "error": error}
+
+
 def validate_post_text(text: Any) -> tuple[str | None, dict[str, Any] | None]:
     if not isinstance(text, str):
         return None, validation_error(
@@ -74,16 +89,115 @@ def validate_post_text(text: Any) -> tuple[str | None, dict[str, Any] | None]:
     return normalized_text, None
 
 
-def response_error(response: httpx.Response) -> dict[str, Any]:
+def redact_sensitive_data(value: Any, secrets: tuple[str, ...] = ()) -> Any:
+    if isinstance(value, dict):
+        sanitized: dict[Any, Any] = {}
+        for key, item in value.items():
+            normalized_key = str(key).lower()
+            if normalized_key in SENSITIVE_ERROR_KEYS or normalized_key.endswith("_token"):
+                sanitized[key] = "[REDACTED]"
+            else:
+                sanitized[key] = redact_sensitive_data(item, secrets)
+        return sanitized
+
+    if isinstance(value, list):
+        return [redact_sensitive_data(item, secrets) for item in value]
+
+    if isinstance(value, tuple):
+        return tuple(redact_sensitive_data(item, secrets) for item in value)
+
+    if isinstance(value, str):
+        sanitized_text = value
+        for secret in secrets:
+            if secret:
+                sanitized_text = sanitized_text.replace(secret, "[REDACTED]")
+        return sanitized_text
+
+    return value
+
+
+def linkedin_response_error(
+    response: httpx.Response,
+    *,
+    access_token: str | None = None,
+) -> dict[str, Any]:
     try:
-        error_data: Any = response.json()
-    except Exception:
-        error_data = response.text
-    return {
-        "success": False,
-        "status_code": response.status_code,
-        "error": error_data,
+        linkedin_error: Any = response.json()
+    except (ValueError, TypeError):
+        linkedin_error = response.text
+
+    secrets = (access_token,) if access_token else ()
+    linkedin_error = redact_sensitive_data(linkedin_error, secrets)
+
+    status_code = response.status_code
+    details: dict[str, Any] = {
+        "status_code": status_code,
+        "linkedin_error": linkedin_error,
     }
+
+    if status_code == 401:
+        return operation_error(
+            "linkedin_authentication_error",
+            "LinkedIn authentication failed.",
+            **details,
+        )
+
+    if status_code == 403:
+        return operation_error(
+            "linkedin_permission_error",
+            "LinkedIn denied access to this operation.",
+            **details,
+        )
+
+    if status_code == 429:
+        retry_after = response.headers.get("retry-after")
+        if retry_after:
+            details["retry_after"] = retry_after
+        return operation_error(
+            "linkedin_rate_limit_error",
+            "LinkedIn rate limit exceeded.",
+            **details,
+        )
+
+    if 400 <= status_code < 500:
+        return operation_error(
+            "linkedin_request_error",
+            "LinkedIn rejected the request.",
+            **details,
+        )
+
+    if 500 <= status_code:
+        return operation_error(
+            "linkedin_server_error",
+            "LinkedIn is temporarily unavailable.",
+            **details,
+        )
+
+    return operation_error(
+        "linkedin_unexpected_response",
+        "LinkedIn returned an unexpected response.",
+        **details,
+    )
+
+
+def request_exception_error(exc: httpx.RequestError) -> dict[str, Any]:
+    if isinstance(exc, httpx.TimeoutException):
+        return operation_error(
+            "linkedin_timeout",
+            "The request to LinkedIn timed out.",
+        )
+
+    return operation_error(
+        "linkedin_network_error",
+        "The request to LinkedIn failed due to a network error.",
+    )
+
+
+def unexpected_error() -> dict[str, Any]:
+    return operation_error(
+        "internal_error",
+        "An unexpected internal error occurred.",
+    )
 
 
 server = MCPServer(
@@ -142,9 +256,11 @@ async def linkedin_create_post(text: str) -> dict[str, Any]:
                 "post_id": response.headers.get("x-restli-id"),
                 "text": text,
             }
-        return response_error(response)
-    except Exception as exc:
-        return {"success": False, "error": str(exc)}
+        return linkedin_response_error(response, access_token=token)
+    except httpx.RequestError as exc:
+        return request_exception_error(exc)
+    except Exception:
+        return unexpected_error()
 
 
 @server.tool(
@@ -162,9 +278,11 @@ async def linkedin_get_profile() -> dict[str, Any]:
             )
         if response.status_code == 200:
             return {"success": True, "profile": response.json()}
-        return response_error(response)
-    except Exception as exc:
-        return {"success": False, "error": str(exc)}
+        return linkedin_response_error(response, access_token=token)
+    except httpx.RequestError as exc:
+        return request_exception_error(exc)
+    except Exception:
+        return unexpected_error()
 
 
 @server.tool(
@@ -189,9 +307,11 @@ async def linkedin_get_post(post_id: str) -> dict[str, Any]:
             )
         if response.status_code == 200:
             return {"success": True, "post": response.json()}
-        return response_error(response)
-    except Exception as exc:
-        return {"success": False, "error": str(exc)}
+        return linkedin_response_error(response, access_token=token)
+    except httpx.RequestError as exc:
+        return request_exception_error(exc)
+    except Exception:
+        return unexpected_error()
 
 
 def main() -> None:
