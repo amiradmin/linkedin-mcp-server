@@ -169,6 +169,8 @@ Run:
 pytest -q
 ```
 
+Tests use fake credentials, reusable `httpx.MockTransport` fixtures, sanitized LinkedIn response samples, and an automatic guard that blocks real HTTP. No LinkedIn secrets or live API access are required. See `docs/testing.md` for the fixture and network-isolation strategy.
+
 ## Security notes
 
 - MCP tools access secrets only through the credential-provider interface.
