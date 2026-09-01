@@ -180,6 +180,16 @@ Tests use fake credentials, reusable `httpx.MockTransport` fixtures, sanitized L
 - LinkedIn API errors are sanitized before they are returned to MCP clients.
 - If a LinkedIn token is ever exposed, revoke/rotate it immediately.
 
+For responsible vulnerability reporting, see [SECURITY.md](SECURITY.md).
+
+## Contributing & collaboration
+
+Focused bug fixes, tests, documentation improvements, MCP tool improvements, OAuth/security hardening, and API integration improvements are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) before starting a substantial change.
+
+For broader backend, AI/MCP, open-source, or industrial-AI collaboration, visit [Amir Behvandi's GitHub profile](https://github.com/amiradmin) or join [ForgeMind Discussions](https://github.com/amiradmin/ForgeMind/discussions).
+
+English and Persian participation are both welcome.
+
 ## Portfolio description
 
 > A production-minded MCP server that exposes LinkedIn publishing and post management as structured AI tools, combining the Model Context Protocol, OAuth-based LinkedIn authentication, secure credential-provider abstraction, and REST API integration.
